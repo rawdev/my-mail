@@ -56,7 +56,8 @@ button.link:hover { color: var(--danger); }
 main {
   flex: 1; min-height: 0;
   display: grid;
-  grid-template-columns: 210px minmax(320px, 1fr) minmax(340px, 1.2fr);
+  /* 계정 → 전체 편지함 → 편지함 → 본문 */
+  grid-template-columns: 190px 180px minmax(300px, 1fr) minmax(320px, 1.15fr);
   gap: 1px; background: var(--border);
 }
 aside, section { background: var(--panel); min-width: 0; display: flex; flex-direction: column; }
@@ -68,12 +69,17 @@ aside, section { background: var(--panel); min-width: 0; display: flex; flex-dir
 }
 .pane-head { font-size: 13px; color: var(--text); }
 .meta { margin-left: auto; font-weight: 400; color: var(--muted); font-size: 12px; }
-.folder-sel {
-  font: inherit; font-size: 12px; font-weight: 400;
-  padding: 3px 6px; border-radius: 6px;
-  border: 1px solid var(--border); background: var(--bg); color: var(--text);
-  max-width: 150px;
+
+#folderList { padding: 6px; }
+.folder {
+  display: flex; align-items: center; gap: 7px;
+  padding: 8px 10px; border-radius: 8px; cursor: pointer;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+.folder:hover { background: var(--accent-soft); }
+.folder.active { background: var(--accent-soft); box-shadow: inset 2px 0 0 var(--accent); font-weight: 700; }
+.folder .fname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.folder .ficon { flex: none; opacity: .75; }
 
 .scroll { overflow: auto; flex: 1; }
 .empty { padding: 28px 16px; color: var(--muted); text-align: center; }
@@ -148,7 +154,12 @@ code { background: var(--bg); padding: 1px 4px; border-radius: 4px; }
 #toast.show { opacity: .95; }
 #toast.err { background: var(--danger); }
 
-@media (max-width: 900px) {
-  main { grid-template-columns: 1fr; grid-template-rows: auto auto 1fr; }
-  aside { max-height: 130px; }
+@media (max-width: 1200px) {
+  main { grid-template-columns: 170px 160px minmax(260px, 1fr); }
+  #readPane { grid-column: 1 / -1; min-height: 320px; }
+}
+@media (max-width: 760px) {
+  main { grid-template-columns: 1fr; grid-template-rows: auto auto auto 1fr; }
+  #readPane { grid-column: auto; }
+  aside, #folderPane { max-height: 140px; }
 }

@@ -105,10 +105,13 @@ async function removeAccount(a) {
     await api('/api/accounts/' + encodeURIComponent(a.id), { method: 'DELETE' });
     if (current === a.id) {
       current = null;
-      emptyMsg($('#listBody'), '계정을 선택하세요.');
+      currentFolder = '';
+      emptyMsg($('#folderList'), '계정을 선택하세요.');
+      emptyMsg($('#listBody'), '편지함을 선택하세요.');
       emptyMsg($('#readBody'), '메일을 클릭하면 본문이 여기에 표시됩니다.');
-      $('#listTitle').textContent = '계정을 선택하세요';
+      $('#listTitle').textContent = '편지함을 선택하세요';
       $('#listMeta').textContent = '';
+      $('#folderMeta').textContent = '';
     }
     await loadAccounts();
     toast('삭제했습니다.');
@@ -127,42 +130,95 @@ function selectAccount(id) {
   });
   emptyMsg($('#readBody'), '메일을 클릭하면 본문이 여기에 표시됩니다.');
   $('#readTitle').textContent = '본문';
-  $('#folderSel').hidden = true;
-  loadMails();
+  emptyMsg($('#listBody'), '편지함을 선택하세요.');
+  $('#listTitle').textContent = '편지함을 선택하세요';
+  $('#listMeta').textContent = '';
+  spinner($('#folderList'), '편지함 목록을 불러오는 중…');
+  $('#folderMeta').textContent = '';
   loadFolders();
 }
 
+// 폴더 이름 앞에 붙일 아이콘 (이름으로 대충 매칭, 없으면 기본 폴더 아이콘)
+function folderIcon(name) {
+  const n = name.toLowerCase();
+  if (/받은|inbox/.test(n)) return '📥';
+  if (/보낸|보냄|sent/.test(n)) return '📤';
+  if (/초안|draft/.test(n)) return '📝';
+  if (/스팸|spam|junk/.test(n)) return '🚫';
+  if (/휴지통|trash|삭제/.test(n)) return '🗑️';
+  if (/보관|archive/.test(n)) return '📦';
+  if (/템플릿|template/.test(n)) return '📋';
+  if (/알림|notification/.test(n)) return '🔔';
+  if (/newsletter|뉴스/.test(n)) return '📰';
+  return '📁';
+}
+
 async function loadFolders() {
-  const sel = $('#folderSel');
   const acct = current;
+  const box = $('#folderList');
   try {
     const data = await api('/api/folders?account=' + encodeURIComponent(acct));
     if (acct !== current) return;              // 그 사이 계정이 바뀌었으면 무시
-    if (!data.folders || !data.folders.length) { sel.hidden = true; return; }
 
-    sel.innerHTML = '';
-    data.folders.forEach((f) => {
-      const o = document.createElement('option');
-      o.value = f.name;
-      o.textContent = f.name;
-      if (f.current && !currentFolder) o.selected = true;
-      sel.appendChild(o);
+    const folders = data.folders || [];
+    if (!folders.length) {
+      // 폴더를 지원하지 않는 서비스 — 기본 편지함만 바로 연다
+      emptyMsg(box, '이 서비스는 편지함 목록을 지원하지 않습니다.');
+      $('#folderMeta').textContent = '';
+      loadMails();
+      return;
+    }
+
+    box.innerHTML = '';
+    $('#folderMeta').textContent = folders.length + '개';
+    folders.forEach((f) => {
+      const el = document.createElement('div');
+      el.className = 'folder';
+      el.dataset.name = f.name;
+      el.setAttribute('role', 'button');
+      el.tabIndex = 0;
+
+      const icon = document.createElement('span');
+      icon.className = 'ficon';
+      icon.textContent = folderIcon(f.name);
+      const nm = document.createElement('span');
+      nm.className = 'fname';
+      nm.textContent = f.name;
+      el.append(icon, nm);
+
+      const open = () => selectFolder(f.name);
+      el.addEventListener('click', open);
+      el.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); open(); }
+      });
+      box.appendChild(el);
     });
-    sel.hidden = false;
+
+    // 서버가 알려준 현재 폴더(보통 받은편지함)를 바로 연다
+    const start = folders.find((f) => f.current) || folders[0];
+    selectFolder(start.name);
   } catch (e) {
-    sel.hidden = true;                          // 폴더 미지원 서비스는 조용히 숨김
+    if (e.data && e.data.needLogin) {
+      emptyMsg(box, '로그인이 필요합니다.');
+      openLogin(acct);
+    } else {
+      emptyMsg(box, e.message);
+    }
   }
 }
 
-$('#folderSel').addEventListener('change', (ev) => {
-  currentFolder = ev.target.value;
+function selectFolder(name) {
+  currentFolder = name;
+  document.querySelectorAll('#folderList .folder').forEach((el) => {
+    el.classList.toggle('active', el.dataset.name === name);
+  });
+  emptyMsg($('#readBody'), '메일을 클릭하면 본문이 여기에 표시됩니다.');
   loadMails();
-});
+}
 
 async function loadMails() {
   if (!current) { toast('계정을 먼저 선택하세요.', true); return; }
-  const acct = accounts.find((a) => a.id === current);
-  $('#listTitle').textContent = acct ? acct.email : current;
+  $('#listTitle').textContent = currentFolder || '받은 편지함';
   $('#listMeta').textContent = '';
   spinner($('#listBody'), '메일을 가져오는 중… (브라우저 세션을 여느라 몇 초 걸립니다)');
 
