@@ -27,7 +27,9 @@
         "subject": null,
         "header": null,
         "body": null
-      }
+      },
+      "list_container": null,
+      "folders": null
     },
     "daum": {
       "login_url": "https://mail.daum.net",
@@ -53,7 +55,9 @@
         "subject": null,
         "header": null,
         "body": null
-      }
+      },
+      "list_container": null,
+      "folders": null
     },
     "zoho": {
       "login_url": "https://accounts.zoho.com/signin?servicename=VirtualOffice&serviceurl=https%3A%2F%2Fmail.zoho.com%2Fzm%2F",
@@ -79,6 +83,13 @@
         "subject": ".zmPVHeading",
         "header": ".zmMailHeader",
         "body": ".zmMailContent"
+      },
+      "list_container": ".SC_mclst",
+      "folders": {
+        "node": "#zmlTree div.zmTreeNode",
+        "name": ".zmTreeText",
+        "current_class": "zmCurTree",
+        "url": "https://mail.zoho.com/zm/#mail/folder/{id}"
       }
     },
     "generic": {
@@ -105,7 +116,9 @@
         "subject": null,
         "header": null,
         "body": null
-      }
+      },
+      "list_container": null,
+      "folders": null
     }
   }
 }

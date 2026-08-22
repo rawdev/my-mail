@@ -297,15 +297,22 @@ def extract_heuristic(page, limit):
 
 
 def fetch_mails(page, provider, limit):
-    if provider.get("row"):
+    row_sel = provider.get("row")
+    cont_sel = provider.get("list_container")
+    if row_sel:
         try:
             # SPA 는 로그인 직후 목록 렌더링이 늦다. 행이 나타날 때까지 넉넉히 기다리고,
             # 나머지 행이 채워지도록 잠깐 더 대기한다.
-            page.wait_for_selector(provider["row"], timeout=25000)
+            # 빈 폴더는 행이 영영 안 생기므로 목록 컨테이너가 떠도 대기를 끝낸다.
+            wait_sel = f"{row_sel}, {cont_sel}" if cont_sel else row_sel
+            page.wait_for_selector(wait_sel, timeout=25000)
             page.wait_for_timeout(1500)
             mails = extract_with_selectors(page, provider, limit)
             if mails:
                 return mails, "selector"
+            # 목록은 떴는데 행이 없다 = 추출 실패가 아니라 '빈 폴더'
+            if cont_sel and page.query_selector(cont_sel):
+                return [], "empty"
         except PWTimeout:
             pass
         console.print("[yellow]프리셋 셀렉터로 못 찾아 휴리스틱 추출기로 전환합니다. "
@@ -334,6 +341,64 @@ LARGEST_BLOCK_JS = """
   return best || '';
 }
 """
+
+
+FOLDERS_JS_TEMPLATE = """
+() => {
+  const out = [];
+  for (const n of document.querySelectorAll(%(node)s)) {
+    const t = n.querySelector(%(name)s);
+    out.push({
+      id: n.id,
+      name: t ? t.innerText.trim() : '',
+      current: %(cur)s ? n.className.indexOf(%(cur)s) >= 0 : false,
+    });
+  }
+  return out.filter(f => f.id && f.name);
+}
+"""
+
+
+def list_folders(page, provider):
+    """좌측 폴더 트리에서 [{id, name, current}] 목록을 읽어온다."""
+    conf = provider.get("folders")
+    if not conf:
+        return []
+    js = FOLDERS_JS_TEMPLATE % {
+        "node": json.dumps(conf["node"]),
+        "name": json.dumps(conf["name"]),
+        "cur": json.dumps(conf.get("current_class") or ""),
+    }
+    try:
+        page.wait_for_selector(conf["node"], timeout=20000)
+        return page.evaluate(js)
+    except PWTimeout:
+        return []
+    except Exception:
+        return []
+
+
+def resolve_folder(folders, key):
+    """이름(부분 일치, 대소문자 무시) 또는 폴더 ID 로 폴더를 찾는다."""
+    if not key:
+        return None
+    k = str(key).strip().lower()
+    for f in folders:
+        if f["id"] == key or f["name"].lower() == k:
+            return f
+    matches = [f for f in folders if k in f["name"].lower()]
+    return matches[0] if len(matches) == 1 else None
+
+
+def goto_folder(page, provider, folder):
+    """해당 폴더로 이동. 성공하면 True."""
+    conf = provider.get("folders") or {}
+    url = conf.get("url")
+    if url and folder.get("id"):
+        page.goto(url.format(id=folder["id"]), wait_until="domcontentloaded")
+        wait_for_settle(page)
+        return True
+    return False
 
 
 def open_mail_rows(page, provider):
@@ -548,15 +613,22 @@ def cmd_fetch(cfg, args):
                     try:
                         if not ensure_logged_in(page, provider, acct):
                             continue
+                        folder = select_folder(page, provider, args.folder)
+                        if folder == "notfound":
+                            continue
+                        label = f" / {folder['name']}" if isinstance(folder, dict) else ""
                         mails, mode = fetch_mails(page, provider, limit)
                         if not mails:
-                            console.print(f"[yellow]{acct['id']}: 메일을 찾지 못했습니다. "
-                                          f"`inspect --account {acct['id']}` 로 확인해보세요.[/yellow]")
+                            if mode == "empty":
+                                console.print(f"[dim]{acct['id']}{label}: 이 폴더에 메일이 없습니다.[/dim]")
+                            else:
+                                console.print(f"[yellow]{acct['id']}: 메일을 찾지 못했습니다. "
+                                              f"`inspect --account {acct['id']}` 로 확인해보세요.[/yellow]")
                             continue
                         now = time.strftime("%H:%M:%S")
                         seen = load_seen(acct)
                         if first_round or not args.watch:
-                            render_table(mails, f"📬 {acct['email']} — 최신 {len(mails)}건 ({mode}, {now})")
+                            render_table(mails, f"📬 {acct['email']}{label} — 최신 {len(mails)}건 ({mode}, {now})")
                         else:
                             pairs = [(i, m) for i, m in enumerate(mails, 1)
                                      if mail_key(m) not in seen]
@@ -578,6 +650,51 @@ def cmd_fetch(cfg, args):
             console.print("\n[dim]감시를 종료합니다.[/dim]")
 
 
+def select_folder(page, provider, key, quiet=False):
+    """--folder 값에 맞는 폴더로 이동. 이동했으면 폴더 dict, 아니면 None."""
+    if not key:
+        return None
+    folders = list_folders(page, provider)
+    if not folders:
+        if not quiet:
+            console.print("[yellow]이 서비스는 폴더 목록을 지원하지 않습니다.[/yellow]")
+        return None
+    folder = resolve_folder(folders, key)
+    if not folder:
+        names = ", ".join(f["name"] for f in folders)
+        console.print(f"[red]'{key}' 폴더를 찾을 수 없습니다.[/red]")
+        console.print(f"[dim]사용 가능: {names}[/dim]")
+        return "notfound"
+    goto_folder(page, provider, folder)
+    return folder
+
+
+def cmd_folders(cfg, args):
+    for acct in pick_accounts(args):
+        provider = get_provider(cfg, acct["provider"])
+        with sync_playwright() as pw:
+            ctx = open_context(pw, cfg, acct, headed=args.headed)
+            page = ctx.pages[0] if ctx.pages else ctx.new_page()
+            try:
+                if not ensure_logged_in(page, provider, acct):
+                    continue
+                folders = list_folders(page, provider)
+                if not folders:
+                    console.print(f"[yellow]{acct['id']}: 폴더 목록을 찾지 못했습니다.[/yellow]")
+                    continue
+                table = Table(title=f"📁 {acct['email']} — 폴더 {len(folders)}개")
+                table.add_column("", width=2)
+                table.add_column("폴더명")
+                table.add_column("ID", style="dim")
+                for f in folders:
+                    table.add_row("▶" if f["current"] else "",
+                                  f["name"], f["id"],
+                                  style="bold cyan" if f["current"] else None)
+                console.print(table)
+            finally:
+                ctx.close()
+
+
 def cmd_read(cfg, args):
     accounts = pick_accounts(args)
     if len(accounts) > 1:
@@ -596,6 +713,8 @@ def cmd_read(cfg, args):
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
         try:
             if not ensure_logged_in(page, provider, acct):
+                return
+            if select_folder(page, provider, getattr(args, "folder", None)) == "notfound":
                 return
             rows = open_mail_rows(page, provider)
             if not rows:
@@ -667,8 +786,11 @@ def main():
     p_fetch = sub.add_parser("fetch", parents=[common], help="최신 메일 출력")
     p_fetch.add_argument("--limit", type=int, help="가져올 메일 수")
     p_fetch.add_argument("--watch", type=int, metavar="초", help="N초마다 새 메일 감시")
+    p_fetch.add_argument("--folder", help="폴더 이름 또는 ID (생략 시 받은편지함)")
     p_read = sub.add_parser("read", parents=[common], help="메일 본문 읽기")
     p_read.add_argument("number", type=int, help="목록에서의 번호 (1부터)")
+    p_read.add_argument("--folder", help="폴더 이름 또는 ID")
+    sub.add_parser("folders", parents=[common], help="폴더 목록 보기")
     sub.add_parser("inspect", parents=[common], help="셀렉터 튜닝용 구조 덤프")
 
     args = ap.parse_args()
@@ -686,6 +808,8 @@ def main():
         cmd_fetch(cfg, args)
     elif args.command == "read":
         cmd_read(cfg, args)
+    elif args.command == "folders":
+        cmd_folders(cfg, args)
     elif args.command == "inspect":
         cmd_inspect(cfg, args)
 

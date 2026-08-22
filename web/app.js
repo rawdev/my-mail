@@ -5,6 +5,7 @@ let accounts = [];
 let providers = [];
 let current = null;      // 선택된 계정 id
 let currentMails = [];
+let currentFolder = '';  // 선택된 폴더 이름 ('' = 기본 = 받은편지함)
 
 // ---------------------------------------------------------------- 유틸
 
@@ -120,13 +121,43 @@ async function removeAccount(a) {
 
 function selectAccount(id) {
   current = id;
+  currentFolder = '';
   document.querySelectorAll('#accountList li').forEach((li) => {
     li.classList.toggle('active', li.dataset.id === id);
   });
   emptyMsg($('#readBody'), '메일을 클릭하면 본문이 여기에 표시됩니다.');
   $('#readTitle').textContent = '본문';
+  $('#folderSel').hidden = true;
   loadMails();
+  loadFolders();
 }
+
+async function loadFolders() {
+  const sel = $('#folderSel');
+  const acct = current;
+  try {
+    const data = await api('/api/folders?account=' + encodeURIComponent(acct));
+    if (acct !== current) return;              // 그 사이 계정이 바뀌었으면 무시
+    if (!data.folders || !data.folders.length) { sel.hidden = true; return; }
+
+    sel.innerHTML = '';
+    data.folders.forEach((f) => {
+      const o = document.createElement('option');
+      o.value = f.name;
+      o.textContent = f.name;
+      if (f.current && !currentFolder) o.selected = true;
+      sel.appendChild(o);
+    });
+    sel.hidden = false;
+  } catch (e) {
+    sel.hidden = true;                          // 폴더 미지원 서비스는 조용히 숨김
+  }
+}
+
+$('#folderSel').addEventListener('change', (ev) => {
+  currentFolder = ev.target.value;
+  loadMails();
+});
 
 async function loadMails() {
   if (!current) { toast('계정을 먼저 선택하세요.', true); return; }
@@ -136,7 +167,8 @@ async function loadMails() {
   spinner($('#listBody'), '메일을 가져오는 중… (브라우저 세션을 여느라 몇 초 걸립니다)');
 
   try {
-    const data = await api('/api/mails?account=' + encodeURIComponent(current));
+    const data = await api('/api/mails?account=' + encodeURIComponent(current)
+      + (currentFolder ? '&folder=' + encodeURIComponent(currentFolder) : ''));
     currentMails = data.mails;
     renderMails(data);
   } catch (e) {
@@ -154,7 +186,10 @@ function renderMails(data) {
   const box = $('#listBody');
   box.innerHTML = '';
   if (!data.mails.length) {
-    emptyMsg(box, '메일이 없습니다.');
+    $('#listMeta').textContent = '';
+    emptyMsg(box, data.mode === 'empty'
+      ? '이 폴더에 메일이 없습니다.'
+      : '메일 목록을 찾지 못했습니다. (셀렉터 확인 필요)');
     return;
   }
   const unread = data.mails.filter((m) => m.unread).length;
@@ -209,7 +244,8 @@ async function openMail(n, rowEl) {
   spinner($('#readBody'), '본문을 여는 중…');
 
   try {
-    const data = await api('/api/mail?account=' + encodeURIComponent(current) + '&n=' + n);
+    const data = await api('/api/mail?account=' + encodeURIComponent(current) + '&n=' + n
+      + (currentFolder ? '&folder=' + encodeURIComponent(currentFolder) : ''));
     const box = $('#readBody');
     box.innerHTML = '';
 

@@ -22,6 +22,8 @@ POP/IMAP을 지원하지 않는 메일 서비스를 **웹으로 직접 접속(�
 | 오른쪽 | 클릭한 메일의 본문 |
 
 - **계정 추가** — 오른쪽 위 `＋ 계정 추가`. 이메일 도메인을 보고 서비스를 자동 추천합니다.
+- **폴더 선택** — 가운데 칸 상단의 드롭다운으로 받은편지함 외 폴더(보냄, 스팸,
+  직접 만든 폴더 등)도 볼 수 있습니다.
 - **메일 보기** — 왼쪽에서 계정을 클릭하면 목록을 불러오고, 메일을 클릭하면 본문이 열립니다.
 - **로그인** — 세션이 없거나 만료되면 자동 로그인을 시도하고, 캡차나 2단계 인증이
   필요하면 브라우저 창이 뜹니다. 로그인을 마친 뒤 `로그인 완료됨 · 확인` 을 누르세요.
@@ -45,6 +47,9 @@ python mymail.py fetch                   # 전체 계정 최신 메일
 python mymail.py fetch --account dev     # 특정 계정
 python mymail.py fetch --watch 60        # 60초마다 새 메일 감시
 python mymail.py read 1 --account dev    # 1번 메일 본문
+python mymail.py folders --account dev   # 폴더 목록
+python mymail.py fetch --account dev --folder Notification   # 특정 폴더
+python mymail.py read 1 --account dev --folder Notification
 python mymail.py login --account dev     # 수동 로그인
 python mymail.py inspect --account dev   # 셀렉터 튜닝용 구조 덤프
 ```
@@ -76,6 +81,8 @@ python -m playwright install chromium
 | `logged_in_markers` | 로그인 성공 판정용 — 메일함 주소 조각 |
 | `login_form` | `id` / `pw` / `submit` 셀렉터 (2단계 폼도 지원) |
 | `row`,`sender`,`subject`,`date` | 목록 행과 각 필드 셀렉터 |
+| `list_container` | 목록 컨테이너 — 빈 폴더와 추출 실패를 구분하는 데 씀 |
+| `folders` | 폴더 트리 셀렉터 (`node`/`name`/`current_class`/`url`) |
 | `view.subject/header/body` | 본문 화면 셀렉터 |
 
 `row` 나 `view.body` 를 비워두면 휴리스틱 추출기가 자동으로 추정합니다.
@@ -93,7 +100,7 @@ python -m playwright install chromium
 가입 안내 페이지로 가므로 `https://accounts.zoho.com/signin?...` 을 씁니다.
 
 **"메일을 찾지 못했습니다"** — 새 메일이 없다는 뜻이 **아니라** 목록을 긁어내지 못했다는
-뜻입니다. 목록 셀렉터가 안 맞거나 SPA 렌더링이 끝나기 전에 읽어서 생깁니다.
+뜻입니다. (폴더가 정말 비어 있으면 `이 폴더에 메일이 없습니다` 로 따로 표시됩니다.) 목록 셀렉터가 안 맞거나 SPA 렌더링이 끝나기 전에 읽어서 생깁니다.
 `inspect` 로 구조를 확인해 `config.json` 을 맞추세요.
 
 ## 참고

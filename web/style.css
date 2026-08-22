@@ -68,6 +68,12 @@ aside, section { background: var(--panel); min-width: 0; display: flex; flex-dir
 }
 .pane-head { font-size: 13px; color: var(--text); }
 .meta { margin-left: auto; font-weight: 400; color: var(--muted); font-size: 12px; }
+.folder-sel {
+  font: inherit; font-size: 12px; font-weight: 400;
+  padding: 3px 6px; border-radius: 6px;
+  border: 1px solid var(--border); background: var(--bg); color: var(--text);
+  max-width: 150px;
+}
 
 .scroll { overflow: auto; flex: 1; }
 .empty { padding: 28px 16px; color: var(--muted); text-align: center; }

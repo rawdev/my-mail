@@ -170,6 +170,38 @@ def api_remove_account(aid):
 
 # ---------------------------------------------------------------- 메일 API
 
+@app.get("/api/folders")
+def api_folders():
+    aid = request.args.get("account", "")
+    acct = get_account(aid)
+    if not acct:
+        return jsonify({"error": "계정을 찾을 수 없습니다."}), 404
+
+    c = cfg()
+    provider = M.get_provider(c, acct["provider"])
+    page = pool.page(c, acct)
+    if not M.ensure_logged_in(page, provider, acct):
+        return jsonify({"error": "로그인이 필요합니다.", "needLogin": True}), 401
+    return jsonify({"folders": M.list_folders(page, provider)})
+
+
+def _goto_folder_if_needed(page, provider, folder_key):
+    """folder_key 로 폴더 이동. (오류메시지, 폴더dict) 를 돌려준다."""
+    if not folder_key:
+        return None, None
+    folders = M.list_folders(page, provider)
+    if not folders:
+        return None, None                       # 폴더를 지원하지 않는 서비스
+    f = M.resolve_folder(folders, folder_key)
+    if not f:
+        names = ", ".join(x["name"] for x in folders)
+        return f"'{folder_key}' 폴더를 찾을 수 없습니다. (사용 가능: {names})", None
+    # 이미 그 폴더를 보고 있으면 다시 이동하지 않는다
+    if f["id"] not in page.url:
+        M.goto_folder(page, provider, f)
+    return None, f
+
+
 @app.get("/api/mails")
 def api_mails():
     aid = request.args.get("account", "")
@@ -185,6 +217,10 @@ def api_mails():
         return jsonify({"error": "로그인이 필요합니다.",
                         "needLogin": True, "url": page.url}), 401
 
+    err, folder = _goto_folder_if_needed(page, provider, request.args.get("folder"))
+    if err:
+        return jsonify({"error": err}), 400
+
     limit = int(request.args.get("limit") or c.get("limit", 20))
     mails, mode = M.fetch_mails(page, provider, limit)
 
@@ -194,7 +230,8 @@ def api_mails():
         m["isNew"] = M.mail_key(m) not in seen
     M.save_seen(acct, seen | {M.mail_key(m) for m in mails})
 
-    return jsonify({"mails": mails, "mode": mode, "email": acct["email"]})
+    return jsonify({"mails": mails, "mode": mode, "email": acct["email"],
+                    "folder": folder["name"] if folder else None})
 
 
 @app.get("/api/mail")
@@ -212,10 +249,15 @@ def api_mail():
                                  f"본문 열기를 지원하지 않습니다."}), 400
 
     page = pool.page(c, acct)
+    err, _ = _goto_folder_if_needed(page, provider, request.args.get("folder"))
+    if err:
+        return jsonify({"error": err}), 400
+
     rows = M.open_mail_rows(page, provider)
     if not rows:
         if not M.ensure_logged_in(page, provider, acct):
             return jsonify({"error": "로그인이 필요합니다.", "needLogin": True}), 401
+        _goto_folder_if_needed(page, provider, request.args.get("folder"))
         rows = M.open_mail_rows(page, provider)
     if not rows:
         return jsonify({"error": "메일 목록을 찾지 못했습니다."}), 404
