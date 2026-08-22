@@ -1,0 +1,16 @@
+# === 절대 커밋하면 안 되는 것 ===
+# 메일 계정 비밀번호가 평문으로 들어 있음
+accounts.json
+# 로그인 세션 쿠키가 담긴 브라우저 프로필
+user_data/
+# 읽은 메일 기록 (제목/보낸사람 해시)
+.seen_*.json
+
+# === 잡다한 것 ===
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.log
+.DS_Store
+Thumbs.db

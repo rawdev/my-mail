@@ -1,0 +1,111 @@
+{
+  "headless": true,
+  "limit": 20,
+  "user_data_dir": "user_data",
+  "providers": {
+    "naver": {
+      "login_url": "https://mail.naver.com",
+      "mail_url": "https://mail.naver.com/v2/folders/0/all",
+      "login_redirect_markers": [
+        "nid.naver.com",
+        "/login"
+      ],
+      "login_form": {
+        "id": "#id",
+        "pw": "#pw",
+        "submit": "#log\\.login, .btn_login, button[type='submit']"
+      },
+      "row": "li.mail_item",
+      "sender": ".mail_sender",
+      "subject": ".mail_title",
+      "date": ".mail_time, .mail_date",
+      "unread_class": "unread",
+      "logged_in_markers": [
+        "mail.naver.com"
+      ],
+      "view": {
+        "subject": null,
+        "header": null,
+        "body": null
+      }
+    },
+    "daum": {
+      "login_url": "https://mail.daum.net",
+      "mail_url": "https://mail.daum.net/top/INBOX",
+      "login_redirect_markers": [
+        "accounts.kakao.com",
+        "logins.daum.net"
+      ],
+      "login_form": {
+        "id": "input[name='loginId'], input[name='email']",
+        "pw": "input[name='password']",
+        "submit": "button[type='submit'], .btn_confirm"
+      },
+      "row": "ul.list_mail > li",
+      "sender": ".txt_from, .name_from",
+      "subject": ".tit_subject, .link_subject",
+      "date": ".txt_date",
+      "unread_class": "unread",
+      "logged_in_markers": [
+        "mail.daum.net"
+      ],
+      "view": {
+        "subject": null,
+        "header": null,
+        "body": null
+      }
+    },
+    "zoho": {
+      "login_url": "https://accounts.zoho.com/signin?servicename=VirtualOffice&serviceurl=https%3A%2F%2Fmail.zoho.com%2Fzm%2F",
+      "mail_url": "https://mail.zoho.com/zm/#mail/folder/inbox",
+      "login_redirect_markers": [
+        "accounts.zoho.com",
+        "signin"
+      ],
+      "login_form": {
+        "id": "#login_id",
+        "pw": "#password",
+        "submit": "#nextbtn"
+      },
+      "row": "div.zmList",
+      "sender": ".zmLSenderName, .zmLSender",
+      "subject": ".zmLSub",
+      "date": ".zmLDate span",
+      "unread_class": null,
+      "logged_in_markers": [
+        "mail.zoho.com/zm"
+      ],
+      "view": {
+        "subject": ".zmPVHeading",
+        "header": ".zmMailHeader",
+        "body": ".zmMailContent"
+      }
+    },
+    "generic": {
+      "login_url": "",
+      "mail_url": "",
+      "login_redirect_markers": [
+        "login",
+        "signin",
+        "sso",
+        "auth"
+      ],
+      "login_form": {
+        "id": "input[type='email'], input[name*='id'], input[name*='user']",
+        "pw": "input[type='password']",
+        "submit": "button[type='submit'], input[type='submit']"
+      },
+      "row": null,
+      "sender": null,
+      "subject": null,
+      "date": null,
+      "unread_class": null,
+      "logged_in_markers": [],
+      "view": {
+        "subject": null,
+        "header": null,
+        "body": null
+      }
+    }
+  }
+}

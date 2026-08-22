@@ -1,0 +1,8 @@
+[
+  {
+    "id": "dev",
+    "email": "me@example.com",
+    "provider": "zoho",
+    "password": "여기에-비밀번호"
+  }
+]

@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>my-mail 웹 콘솔</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>
+  <h1>📬 my-mail</h1>
+  <div class="spacer"></div>
+  <button id="btnReload" class="ghost" title="목록 새로고침">↻ 새로고침</button>
+  <button id="btnAdd" class="ghost">＋ 계정 추가</button>
+</header>
+
+<main>
+  <aside id="accounts">
+    <div class="side-title">계정</div>
+    <ul id="accountList"></ul>
+  </aside>
+
+  <section id="listPane">
+    <div class="pane-head">
+      <span id="listTitle">계정을 선택하세요</span>
+      <span id="listMeta" class="meta"></span>
+    </div>
+    <div id="listBody" class="scroll">
+      <div class="empty">왼쪽에서 계정을 선택하면 최신 메일을 불러옵니다.</div>
+    </div>
+  </section>
+
+  <section id="readPane">
+    <div class="pane-head"><span id="readTitle">본문</span></div>
+    <div id="readBody" class="scroll">
+      <div class="empty">메일을 클릭하면 본문이 여기에 표시됩니다.</div>
+    </div>
+  </section>
+</main>
+
+<div id="toast"></div>
+
+<dialog id="addDialog">
+  <form method="dialog" id="addForm">
+    <h2>계정 추가</h2>
+    <label>이메일<input type="email" id="fEmail" required placeholder="me@example.com"></label>
+    <label>비밀번호<input type="password" id="fPassword" required></label>
+    <label>메일 서비스<select id="fProvider"></select></label>
+    <p class="hint">비밀번호는 <code>accounts.json</code> 에 평문으로 저장됩니다.</p>
+    <menu>
+      <button value="cancel" class="ghost">취소</button>
+      <button id="addSubmit" value="ok" class="primary">추가</button>
+    </menu>
+  </form>
+</dialog>
+
+<dialog id="loginDialog">
+  <div>
+    <h2>수동 로그인</h2>
+    <p id="loginMsg"></p>
+    <menu>
+      <button id="loginCancel" class="ghost">닫기</button>
+      <button id="loginVerify" class="primary">로그인 완료됨 · 확인</button>
+    </menu>
+  </div>
+</dialog>
+
+<script src="/app.js"></script>
+</body>
+</html>
