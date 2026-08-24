@@ -2,6 +2,8 @@
   "headless": true,
   "limit": 20,
   "user_data_dir": "user_data",
+  "sync_on_start": true,
+  "sync_limit": 50,
   "providers": {
     "naver": {
       "login_url": "https://mail.naver.com",

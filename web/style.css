@@ -72,6 +72,19 @@ aside, section { background: var(--panel); min-width: 0; display: flex; flex-dir
 
 .archive-status { font-size: 12px; color: var(--muted); margin-right: 4px; }
 
+/* 전체 가져오기 진행 바 */
+#syncBar {
+  position: relative; display: flex; align-items: center; gap: 10px;
+  padding: 7px 16px; background: var(--panel);
+  border-bottom: 1px solid var(--border); font-size: 12px;
+}
+#syncFill {
+  position: absolute; left: 0; top: 0; bottom: 0; width: 0;
+  background: var(--accent); opacity: .14; transition: width .25s ease;
+}
+#syncText { position: relative; color: var(--text); flex: 1; }
+#syncStop { position: relative; padding: 3px 10px; }
+
 /* 안읽음 개수 배지 */
 .count {
   margin-left: auto; flex: none;

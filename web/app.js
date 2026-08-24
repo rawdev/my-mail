@@ -557,6 +557,101 @@ async function countAllUnread() {
 $('#btnCount').addEventListener('click', countAllUnread);
 $('#btnReload').addEventListener('click', () => { if (current) loadMails(); });
 
+// ---------------------------------------------------------------- 전체 가져오기
+
+let syncing = false;
+let syncAbort = false;
+
+function showSyncBar(show) {
+  $('#syncBar').hidden = !show;
+  if (!show) { $('#syncFill').style.width = '0'; $('#syncText').textContent = ''; }
+}
+
+/** 등록된 모든 계정의 모든 편지함을 순서대로 가져온다(+없는 메일 보관, 안읽음 집계). */
+async function syncAll() {
+  if (syncing) return;
+  if (!accounts.length) return;
+
+  syncing = true;
+  syncAbort = false;
+  showSyncBar(true);
+  $('#btnSync').disabled = true;
+
+  // 1단계: 계정별 편지함 목록을 모아 전체 작업 수를 만든다
+  const jobs = [];
+  for (const a of accounts) {
+    if (syncAbort) break;
+    $('#syncText').textContent = a.email + ' — 편지함 목록 확인 중…';
+    try {
+      const d = await api('/api/folders?account=' + encodeURIComponent(a.id));
+      const fs = (d.folders || []);
+      if (fs.length) fs.forEach((f) => jobs.push({ acct: a, folder: f.name }));
+      else jobs.push({ acct: a, folder: '' });          // 폴더 미지원 서비스
+    } catch (e) {
+      // 로그인 안 된 계정은 건너뛰고 계속 (전체 수집이 멈추지 않도록)
+      toast(a.email + ': ' + e.message, true);
+    }
+  }
+
+  // 2단계: 편지함을 하나씩 수집
+  let done = 0, newMails = 0, bodies = 0, failed = 0;
+  for (const job of jobs) {
+    if (syncAbort) break;
+    done++;
+    $('#syncFill').style.width = Math.round((done / jobs.length) * 100) + '%';
+    $('#syncText').textContent =
+      '전체 가져오기 ' + done + '/' + jobs.length + ' — '
+      + job.acct.id + ' / ' + (job.folder || '받은 편지함');
+    try {
+      const r = await api('/api/sync/folder', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ account: job.acct.id, folder: job.folder }),
+      });
+      newMails += r.new || 0;
+      bodies += r.bodies || 0;
+      // 지금 보고 있는 계정이면 배지를 즉시 반영
+      if (job.acct.id === current) {
+        const el = document.querySelector('#folderList .count[data-folder="' + CSS.escape(r.folder) + '"]');
+        if (el) { el.textContent = countText(r.unread); el.className = 'count ' + countClass(r.unread); }
+      }
+    } catch (e) {
+      failed++;
+    }
+  }
+
+  refreshAccountBadges();
+  syncing = false;
+  $('#btnSync').disabled = false;
+  showSyncBar(false);
+
+  if (syncAbort) {
+    toast('전체 가져오기를 중지했습니다. (' + done + '/' + jobs.length + ')');
+  } else {
+    api('/api/sync/done', { method: 'POST' }).catch(() => {});
+    toast('전체 가져오기 완료 — 새 메일 ' + newMails + '건, 본문 ' + bodies + '건'
+      + (failed ? ', 실패 ' + failed + '개 편지함' : ''));
+  }
+}
+
+$('#btnSync').addEventListener('click', syncAll);
+$('#syncStop').addEventListener('click', () => {
+  syncAbort = true;
+  $('#syncText').textContent = '중지하는 중… (진행 중인 편지함까지만 끝냅니다)';
+});
+
 // ---------------------------------------------------------------- 시작
 
-loadAccounts().catch((e) => toast(e.message, true));
+(async function start() {
+  try {
+    await loadAccounts();
+  } catch (e) {
+    toast(e.message, true);
+    return;
+  }
+  try {
+    const c = await api('/api/config');
+    // 서버가 켜진 뒤 처음 열었을 때만 자동 수집 (새로고침마다 반복하지 않음)
+    if (c.syncOnStart && !c.syncedThisBoot && accounts.length) syncAll();
+  } catch (e) { /* 설정을 못 읽으면 자동 수집만 건너뛴다 */ }
+})();

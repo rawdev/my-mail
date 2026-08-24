@@ -853,6 +853,61 @@ def cmd_archive(cfg, args):
                 ctx.close()
 
 
+def cmd_sync(cfg, args):
+    """등록된 모든 계정의 모든 편지함을 가져온다 (안읽음 집계 + 없는 메일 보관)."""
+    accounts = pick_accounts(args)
+    limit = args.limit or cfg.get("sync_limit", 50)
+    grand = {"new": 0, "bodies": 0, "skipped_unread": 0}
+    summary = []
+
+    for acct in accounts:
+        provider = get_provider(cfg, acct["provider"])
+        console.print(f"\n[bold]▶ {acct['email']}[/bold]")
+        with sync_playwright() as pw:
+            ctx = open_context(pw, cfg, acct, headed=args.headed)
+            page = ctx.pages[0] if ctx.pages else ctx.new_page()
+            try:
+                if not ensure_logged_in(page, provider, acct):
+                    summary.append((acct["email"], "로그인 필요", 0, 0))
+                    continue
+                folders = list_folders(page, provider) or [{"name": "받은 편지함", "id": None}]
+                a_unread = a_new = 0
+                for f in folders:
+                    if f.get("id"):
+                        goto_folder(page, provider, f)
+                    mails, mode = fetch_mails(page, provider, limit)
+                    unread = sum(1 for m in mails if m.get("unread"))
+                    if mode != "heuristic":
+                        AR.save_folder_count(acct["id"], f["name"], unread, len(mails))
+                    if not mails:
+                        console.print(f"  [dim]{f['name']}: 비어 있음[/dim]")
+                        continue
+                    r = archive_mails(page, provider, acct, f["name"], mails,
+                                      include_unread=args.include_unread)
+                    for k in grand:
+                        grand[k] += r[k]
+                    a_unread += unread
+                    a_new += r["new"]
+                    console.print(f"  {f['name']}: 전체 {len(mails)}건 / 안읽음 {unread} "
+                                  f"/ 새로 보관 {r['new']}건")
+                summary.append((acct["email"], "OK", a_unread, a_new))
+            finally:
+                ctx.close()
+
+    table = Table(title="⭳ 전체 가져오기 결과")
+    table.add_column("계정")
+    table.add_column("상태")
+    table.add_column("안읽음", justify="right")
+    table.add_column("새로 보관", justify="right")
+    for email, status, u, n in summary:
+        table.add_row(email, status, str(u), str(n),
+                      style="red" if status != "OK" else None)
+    console.print(table)
+    console.print(f"[dim]합계: 새 메일 {grand['new']}건, 본문 {grand['bodies']}건"
+                  + (f", 안읽음 본문 건너뜀 {grand['skipped_unread']}건"
+                     if grand["skipped_unread"] else "") + "[/dim]")
+
+
 def cmd_read(cfg, args):
     accounts = pick_accounts(args)
     if len(accounts) > 1:
@@ -969,6 +1024,12 @@ def main():
                         help="안읽은 메일의 본문도 보관 (열리므로 읽음 처리됨)")
 
     sub.add_parser("unread", parents=[common], help="편지함별 안읽음 개수 세기")
+
+    p_sync = sub.add_parser("sync", parents=[common],
+                            help="등록된 모든 계정의 모든 편지함 가져오기")
+    p_sync.add_argument("--limit", type=int, help="편지함당 최대 메일 수 (기본 50)")
+    p_sync.add_argument("--include-unread", action="store_true",
+                        help="안읽은 메일의 본문도 보관 (열리므로 읽음 처리됨)")
     p_read = sub.add_parser("read", parents=[common], help="메일 본문 읽기")
     p_read.add_argument("number", type=int, help="목록에서의 번호 (1부터)")
     p_read.add_argument("--folder", help="폴더 이름 또는 ID")
@@ -996,6 +1057,8 @@ def main():
         cmd_archive(cfg, args)
     elif args.command == "unread":
         cmd_unread(cfg, args)
+    elif args.command == "sync":
+        cmd_sync(cfg, args)
     elif args.command == "inspect":
         cmd_inspect(cfg, args)
 

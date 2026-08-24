@@ -111,6 +111,64 @@ def stylecss():
 
 # ---------------------------------------------------------------- 계정 API
 
+# 서버가 켜진 뒤 전체 수집을 한 번 했는지. (페이지를 새로고침할 때마다
+# 몇 분짜리 수집이 다시 도는 것을 막는다)
+_synced_this_boot = False
+
+
+@app.get("/api/config")
+def api_config():
+    c = cfg()
+    return jsonify({
+        "syncOnStart": bool(c.get("sync_on_start", True)),
+        "syncedThisBoot": _synced_this_boot,
+        "syncLimit": int(c.get("sync_limit", 50)),
+    })
+
+
+@app.post("/api/sync/folder")
+def api_sync_folder():
+    """편지함 하나를 수집한다: 목록 조회 → 안읽음 집계 → 없는 메일 보관."""
+    data = request.get_json(force=True) or {}
+    acct = get_account(data.get("account", ""))
+    if not acct:
+        return jsonify({"error": "계정을 찾을 수 없습니다."}), 404
+
+    c = cfg()
+    provider = M.get_provider(c, acct["provider"])
+    page = pool.page(c, acct)
+    if not M.ensure_logged_in(page, provider, acct):
+        return jsonify({"error": "로그인이 필요합니다.", "needLogin": True}), 401
+
+    err, folder = _goto_folder_if_needed(page, provider, data.get("folder"))
+    if err:
+        return jsonify({"error": err}), 400
+
+    fname = folder["name"] if folder else "받은 편지함"
+    limit = int(data.get("limit") or c.get("sync_limit", 50))
+    mails, mode = M.fetch_mails(page, provider, limit)
+
+    unread = sum(1 for m in mails if m.get("unread"))
+    if mode != "heuristic":
+        AR.save_folder_count(acct["id"], fname, unread, len(mails))
+
+    res = {"folder": fname, "unread": unread, "total": len(mails), "mode": mode,
+           "new": 0, "bodies": 0, "skipped_unread": 0}
+    if mails:
+        res.update(M.archive_mails(page, provider, acct, fname, mails,
+                                   include_unread=bool(data.get("includeUnread"))))
+    res["accountUnread"] = AR.total_unread(acct["id"])
+    res["archived"] = AR.stats(acct["id"])["total"]
+    return jsonify(res)
+
+
+@app.post("/api/sync/done")
+def api_sync_done():
+    global _synced_this_boot
+    _synced_this_boot = True
+    return jsonify({"ok": True})
+
+
 @app.get("/api/accounts")
 def api_accounts():
     c = cfg()

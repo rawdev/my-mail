@@ -8,6 +8,12 @@ POP/IMAP을 지원하지 않는 메일 서비스를 **웹으로 직접 접속(�
 1. **`setup.bat`** 더블클릭 → 패키지와 브라우저 자동 설치 (최초 1회)
 2. **`run.bat`** 더블클릭 → 웹 콘솔이 브라우저에서 열립니다 (`http://127.0.0.1:8765`)
 
+콘솔을 처음 열면 **등록된 모든 계정의 모든 편지함을 한 번 가져옵니다**
+(안읽음 개수 집계 + 없는 메일 로컬 보관). 상단에 진행 바가 뜨고 `⏹ 중지` 로 멈출 수 있으며,
+서버가 켜져 있는 동안 페이지를 새로고침해도 다시 돌지 않습니다.
+언제든 `⭳ 전체 가져오기` 로 다시 실행할 수 있고, `config.json` 의
+`"sync_on_start": false` 로 자동 실행을 끌 수 있습니다.
+
 서버는 `127.0.0.1` 에만 바인딩되어 **이 PC 밖에서는 접속할 수 없습니다.**
 종료하려면 검은 콘솔 창에서 `Ctrl+C` 를 누르거나 창을 닫으세요.
 
@@ -59,6 +65,7 @@ python mymail.py read 1 --account dev --folder Notification
 python mymail.py login --account dev     # 수동 로그인
 python mymail.py inspect --account dev   # 셀렉터 튜닝용 구조 덤프
 
+python mymail.py sync                              # 모든 계정 · 모든 편지함 가져오기
 python mymail.py unread --account dev              # 편지함별 안읽음 개수
 python mymail.py archive --account dev             # 받은편지함 보관
 python mymail.py archive --account dev --all-folders   # 모든 편지함 보관
@@ -120,6 +127,9 @@ python -m playwright install chromium
 | `row`,`sender`,`subject`,`date` | 목록 행과 각 필드 셀렉터 |
 | `list_container` | 목록 컨테이너 — 빈 폴더와 추출 실패를 구분하는 데 씀 |
 | `folders` | 폴더 트리 셀렉터 (`node`/`name`/`current_class`/`url`) |
+
+최상위 옵션으로 `sync_on_start`(시작 시 전체 수집 여부)와 `sync_limit`(편지함당 최대 수집 메일 수, 기본 50)이 있습니다.
+
 | `view.subject/header/body` | 본문 화면 셀렉터 |
 
 `row` 나 `view.body` 를 비워두면 휴리스틱 추출기가 자동으로 추정합니다.
