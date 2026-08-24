@@ -22,6 +22,7 @@ from flask import Flask, jsonify, request, send_from_directory
 from playwright.sync_api import sync_playwright
 
 import mymail as M
+import archive as AR
 
 BASE_DIR = Path(__file__).resolve().parent
 WEB_DIR = BASE_DIR / "web"
@@ -121,6 +122,8 @@ def api_accounts():
             "email": a["email"],
             "provider": a["provider"],
             "session": profile.exists(),
+            "unread": AR.total_unread(a["id"]),          # 캐시된 값 (없으면 null)
+            "archived": AR.stats(a["id"])["total"],
         })
     return jsonify({"accounts": out, "providers": list(c.get("providers", {}).keys())})
 
@@ -182,7 +185,72 @@ def api_folders():
     page = pool.page(c, acct)
     if not M.ensure_logged_in(page, provider, acct):
         return jsonify({"error": "로그인이 필요합니다.", "needLogin": True}), 401
-    return jsonify({"folders": M.list_folders(page, provider)})
+
+    folders = M.list_folders(page, provider)
+    cached = (AR.load_counts(acct["id"]).get("folders") or {})
+    st = AR.stats(acct["id"])["folders"]
+    for f in folders:                       # 캐시된 안읽음/보관 개수를 붙여준다
+        c = cached.get(f["name"]) or {}
+        f["unread"] = c.get("unread")
+        f["total"] = c.get("total")
+        f["archived"] = (st.get(AR.slug(f["name"])) or {}).get("count", 0)
+    return jsonify({"folders": folders})
+
+
+@app.get("/api/unread")
+def api_unread():
+    """편지함 하나의 안읽음 개수를 센다. (UI 가 폴더별로 하나씩 호출)"""
+    aid = request.args.get("account", "")
+    acct = get_account(aid)
+    if not acct:
+        return jsonify({"error": "계정을 찾을 수 없습니다."}), 404
+
+    c = cfg()
+    provider = M.get_provider(c, acct["provider"])
+    page = pool.page(c, acct)
+    if not M.ensure_logged_in(page, provider, acct):
+        return jsonify({"error": "로그인이 필요합니다.", "needLogin": True}), 401
+
+    name = request.args.get("folder") or ""
+    err, folder = _goto_folder_if_needed(page, provider, name)
+    if err:
+        return jsonify({"error": err}), 400
+
+    fname = folder["name"] if folder else "받은 편지함"
+    unread, total, _, _ = M.count_unread(page, provider, acct, fname)
+    return jsonify({"folder": fname, "unread": unread, "total": total,
+                    "accountUnread": AR.total_unread(acct["id"])})
+
+
+@app.post("/api/archive")
+def api_archive():
+    """현재 편지함에서 아직 저장 안 된 메일을 로컬로 복사한다."""
+    data = request.get_json(force=True) or {}
+    acct = get_account(data.get("account", ""))
+    if not acct:
+        return jsonify({"error": "계정을 찾을 수 없습니다."}), 404
+
+    c = cfg()
+    provider = M.get_provider(c, acct["provider"])
+    page = pool.page(c, acct)
+    if not M.ensure_logged_in(page, provider, acct):
+        return jsonify({"error": "로그인이 필요합니다.", "needLogin": True}), 401
+
+    err, folder = _goto_folder_if_needed(page, provider, data.get("folder"))
+    if err:
+        return jsonify({"error": err}), 400
+
+    fname = folder["name"] if folder else "받은 편지함"
+    mails, mode = M.fetch_mails(page, provider, int(data.get("limit") or 200))
+    if not mails:
+        return jsonify({"new": 0, "bodies": 0, "skipped_unread": 0,
+                        "archived": AR.stats(acct["id"])["total"]})
+
+    res = M.archive_mails(page, provider, acct, fname, mails,
+                          include_unread=bool(data.get("includeUnread")))
+    res["archived"] = AR.stats(acct["id"])["total"]
+    res["folder"] = fname
+    return jsonify(res)
 
 
 def _goto_folder_if_needed(page, provider, folder_key):
@@ -229,6 +297,11 @@ def api_mails():
         m["n"] = i
         m["isNew"] = M.mail_key(m) not in seen
     M.save_seen(acct, seen | {M.mail_key(m) for m in mails})
+
+    # 지금 본 편지함의 안읽음 개수는 공짜로 알 수 있으니 캐시에 남긴다
+    if mode != "heuristic":
+        M.AR.save_folder_count(acct["id"], folder["name"] if folder else "받은 편지함",
+                               sum(1 for m in mails if m.get("unread")), len(mails))
 
     return jsonify({"mails": mails, "mode": mode, "email": acct["email"],
                     "folder": folder["name"] if folder else None})

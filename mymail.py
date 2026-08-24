@@ -30,6 +30,8 @@ from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
 
+import archive as AR
+
 BASE_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = BASE_DIR / "config.json"
 ACCOUNTS_PATH = BASE_DIR / "accounts.json"
@@ -640,6 +642,23 @@ def cmd_fetch(cfg, args):
                             else:
                                 console.print(f"[dim]{now} {acct['id']}: 새 메일 없음[/dim]")
                         save_seen(acct, seen | {mail_key(m) for m in mails})
+
+                        # 안읽음 개수 캐시 갱신
+                        AR.save_folder_count(
+                            acct["id"], folder["name"] if isinstance(folder, dict) else "받은 편지함",
+                            sum(1 for m in mails if m.get("unread")), len(mails))
+
+                        # 실행하면 자동으로 로컬 복사 (없는 메일만)
+                        if not args.no_archive:
+                            r = archive_mails(
+                                page, provider, acct,
+                                folder["name"] if isinstance(folder, dict) else "받은 편지함",
+                                mails, include_unread=args.include_unread)
+                            if r["new"] or r["bodies"]:
+                                console.print(
+                                    f"[dim]  💾 보관: 새 메일 {r['new']}건, 본문 {r['bodies']}건"
+                                    + (f", 안읽음 건너뜀 {r['skipped_unread']}건"
+                                       if r["skipped_unread"] else "") + "[/dim]")
                     finally:
                         ctx.close()
                 first_round = False
@@ -648,6 +667,63 @@ def cmd_fetch(cfg, args):
                 time.sleep(args.watch)
         except KeyboardInterrupt:
             console.print("\n[dim]감시를 종료합니다.[/dim]")
+
+
+def archive_mails(page, provider, account, folder_name, mails,
+                  include_unread=False, progress=None):
+    """아직 저장 안 된 메일만 로컬로 복사한다.
+
+    본문은 메일을 열어야 얻을 수 있고 열면 서버에서 '읽음' 처리되므로,
+    기본적으로 안읽은 메일의 본문은 건너뛴다(메타데이터만 저장).
+    반환: {"new": 새로저장, "bodies": 본문받은수, "skipped_unread": 건너뛴수}
+    """
+    aid = account["id"]
+    email = account.get("email", "")
+    res = {"new": 0, "bodies": 0, "skipped_unread": 0, "total": len(mails)}
+
+    # 본문을 가져오려면 목록 행을 클릭해야 해서, 행 핸들을 미리 확보해둔다
+    rows = None
+    for i, m in enumerate(mails, 1):
+        key = mail_key(m)
+        existed = AR.load_mail(aid, folder_name, key) is not None
+        needs_body = not AR.has_body(aid, folder_name, key)
+
+        if not existed:
+            AR.save_mail(aid, email, folder_name, m, key)
+            res["new"] += 1
+
+        if not needs_body:
+            continue
+        if m.get("unread") and not include_unread:
+            res["skipped_unread"] += 1
+            continue
+
+        if rows is None:
+            rows = open_mail_rows(page, provider)
+        if not rows or i > len(rows):
+            continue
+        try:
+            rows[i - 1].click()
+            subject, header, body = read_opened_mail(page, provider)
+            if body:
+                AR.save_mail(aid, email, folder_name, m, key,
+                             body=body, header=header, subject_full=subject)
+                res["bodies"] += 1
+                if progress:
+                    progress(i, len(mails))
+            # 목록으로 돌아오면 행 핸들이 갈릴 수 있으니 매번 다시 잡는다
+            rows = open_mail_rows(page, provider)
+        except Exception:
+            rows = None
+    return res
+
+
+def count_unread(page, provider, account, folder_name, limit=200):
+    """현재 열린 편지함의 (안읽음, 전체) 개수를 세고 캐시에 저장."""
+    mails, mode = fetch_mails(page, provider, limit)
+    unread = sum(1 for m in mails if m.get("unread"))
+    AR.save_folder_count(account["id"], folder_name, unread, len(mails))
+    return unread, len(mails), mails, mode
 
 
 def select_folder(page, provider, key, quiet=False):
@@ -695,6 +771,88 @@ def cmd_folders(cfg, args):
                 ctx.close()
 
 
+def cmd_unread(cfg, args):
+    """모든 편지함을 돌며 안읽음 개수를 센다."""
+    for acct in pick_accounts(args):
+        provider = get_provider(cfg, acct["provider"])
+        with sync_playwright() as pw:
+            ctx = open_context(pw, cfg, acct, headed=args.headed)
+            page = ctx.pages[0] if ctx.pages else ctx.new_page()
+            try:
+                if not ensure_logged_in(page, provider, acct):
+                    continue
+                folders = list_folders(page, provider) or [{"name": "받은 편지함", "id": None}]
+                table = Table(title=f"📊 {acct['email']} — 안읽음 개수")
+                table.add_column("편지함")
+                table.add_column("안읽음", justify="right")
+                table.add_column("전체", justify="right")
+                total_u = total_a = 0
+                for f in folders:
+                    if f.get("id"):
+                        goto_folder(page, provider, f)
+                    u, n, _, _ = count_unread(page, provider, acct, f["name"])
+                    total_u += u
+                    total_a += n
+                    table.add_row(f["name"], str(u) if u else "-", str(n),
+                                  style="bold cyan" if u else None)
+                    console.print(f"[dim]  {f['name']}: {u}/{n}[/dim]")
+                table.add_section()
+                table.add_row("합계", str(total_u), str(total_a), style="bold")
+                console.print(table)
+            finally:
+                ctx.close()
+
+
+def cmd_archive(cfg, args):
+    """편지함(또는 전체 편지함)의 메일을 로컬로 복사한다."""
+    for acct in pick_accounts(args):
+        provider = get_provider(cfg, acct["provider"])
+        with sync_playwright() as pw:
+            ctx = open_context(pw, cfg, acct, headed=args.headed)
+            page = ctx.pages[0] if ctx.pages else ctx.new_page()
+            try:
+                if not ensure_logged_in(page, provider, acct):
+                    continue
+                if args.all_folders:
+                    targets = list_folders(page, provider) or [{"name": "받은 편지함", "id": None}]
+                elif args.folder:
+                    f = select_folder(page, provider, args.folder)
+                    if f == "notfound":
+                        continue
+                    targets = [f] if isinstance(f, dict) else [{"name": "받은 편지함", "id": None}]
+                else:
+                    targets = [{"name": "받은 편지함", "id": None}]
+
+                grand = {"new": 0, "bodies": 0, "skipped_unread": 0}
+                for f in targets:
+                    if f.get("id"):
+                        goto_folder(page, provider, f)
+                    mails, mode = fetch_mails(page, provider, args.limit or 200)
+                    if not mails:
+                        console.print(f"[dim]  {f['name']}: 비어 있음[/dim]")
+                        continue
+                    AR.save_folder_count(acct["id"], f["name"],
+                                         sum(1 for m in mails if m.get("unread")), len(mails))
+                    r = archive_mails(page, provider, acct, f["name"], mails,
+                                      include_unread=args.include_unread)
+                    for k in grand:
+                        grand[k] += r[k]
+                    console.print(f"  {f['name']}: 새 메일 {r['new']}건 / 본문 {r['bodies']}건"
+                                  + (f" / 안읽음 건너뜀 {r['skipped_unread']}건"
+                                     if r["skipped_unread"] else ""))
+
+                st = AR.stats(acct["id"])
+                console.print(Panel(
+                    f"새로 저장 {grand['new']}건, 본문 {grand['bodies']}건"
+                    + (f", 안읽음 본문 건너뜀 {grand['skipped_unread']}건"
+                       if grand["skipped_unread"] else "")
+                    + f"\n보관함 전체: {st['total']}건 (본문 있음 {st['with_body']}건)"
+                    + f"\n위치: {AR.account_dir(acct['id'])}",
+                    title=f"💾 {acct['email']} 보관 완료", border_style="green"))
+            finally:
+                ctx.close()
+
+
 def cmd_read(cfg, args):
     accounts = pick_accounts(args)
     if len(accounts) > 1:
@@ -714,8 +872,13 @@ def cmd_read(cfg, args):
         try:
             if not ensure_logged_in(page, provider, acct):
                 return
-            if select_folder(page, provider, getattr(args, "folder", None)) == "notfound":
+            folder = select_folder(page, provider, getattr(args, "folder", None))
+            if folder == "notfound":
                 return
+            fname = folder["name"] if isinstance(folder, dict) else "받은 편지함"
+
+            # 클릭하면 목록 핸들이 갈릴 수 있으니 메타데이터를 먼저 확보해 둔다
+            meta, _ = fetch_mails(page, provider, max(args.number, 20))
             rows = open_mail_rows(page, provider)
             if not rows:
                 console.print("[yellow]메일 목록을 찾지 못했습니다.[/yellow]")
@@ -728,6 +891,12 @@ def cmd_read(cfg, args):
 
             rows[idx].click()
             subject, header, body = read_opened_mail(page, provider)
+
+            # 이미 열어서 읽음 처리된 메일이니 본문도 같이 보관해 둔다
+            if body and idx < len(meta):
+                AR.save_mail(acct["id"], acct.get("email", ""), fname,
+                             meta[idx], mail_key(meta[idx]),
+                             body=body, header=header, subject_full=subject)
 
             if not (subject or header or body):
                 console.print("[yellow]본문을 찾지 못했습니다. "
@@ -787,6 +956,19 @@ def main():
     p_fetch.add_argument("--limit", type=int, help="가져올 메일 수")
     p_fetch.add_argument("--watch", type=int, metavar="초", help="N초마다 새 메일 감시")
     p_fetch.add_argument("--folder", help="폴더 이름 또는 ID (생략 시 받은편지함)")
+    p_fetch.add_argument("--no-archive", action="store_true",
+                         help="로컬 자동 보관을 하지 않음")
+    p_fetch.add_argument("--include-unread", action="store_true",
+                         help="안읽은 메일의 본문도 보관 (열리므로 읽음 처리됨)")
+
+    p_arch = sub.add_parser("archive", parents=[common], help="메일을 로컬로 복사해 보관")
+    p_arch.add_argument("--folder", help="폴더 이름 또는 ID")
+    p_arch.add_argument("--all-folders", action="store_true", help="모든 편지함 보관")
+    p_arch.add_argument("--limit", type=int, help="편지함당 최대 메일 수 (기본 200)")
+    p_arch.add_argument("--include-unread", action="store_true",
+                        help="안읽은 메일의 본문도 보관 (열리므로 읽음 처리됨)")
+
+    sub.add_parser("unread", parents=[common], help="편지함별 안읽음 개수 세기")
     p_read = sub.add_parser("read", parents=[common], help="메일 본문 읽기")
     p_read.add_argument("number", type=int, help="목록에서의 번호 (1부터)")
     p_read.add_argument("--folder", help="폴더 이름 또는 ID")
@@ -810,6 +992,10 @@ def main():
         cmd_read(cfg, args)
     elif args.command == "folders":
         cmd_folders(cfg, args)
+    elif args.command == "archive":
+        cmd_archive(cfg, args)
+    elif args.command == "unread":
+        cmd_unread(cfg, args)
     elif args.command == "inspect":
         cmd_inspect(cfg, args)
 

@@ -5,6 +5,8 @@ accounts.json
 user_data/
 # 읽은 메일 기록 (제목/보낸사람 해시)
 .seen_*.json
+# 로컬로 복사해 둔 메일 본문 (개인 정보 덩어리)
+archive/
 
 # === 잡다한 것 ===
 __pycache__/

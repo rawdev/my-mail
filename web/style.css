@@ -70,6 +70,19 @@ aside, section { background: var(--panel); min-width: 0; display: flex; flex-dir
 .pane-head { font-size: 13px; color: var(--text); }
 .meta { margin-left: auto; font-weight: 400; color: var(--muted); font-size: 12px; }
 
+.archive-status { font-size: 12px; color: var(--muted); margin-right: 4px; }
+
+/* 안읽음 개수 배지 */
+.count {
+  margin-left: auto; flex: none;
+  font-size: 11px; font-weight: 700;
+  min-width: 18px; text-align: center;
+  padding: 1px 6px; border-radius: 99px;
+  background: var(--accent); color: #fff;
+}
+.count.zero { background: transparent; color: var(--muted); font-weight: 400; }
+.count.unknown { background: transparent; color: var(--muted); font-weight: 400; opacity: .55; }
+
 #folderList { padding: 6px; }
 .folder {
   display: flex; align-items: center; gap: 7px;
