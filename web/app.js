@@ -242,8 +242,28 @@ async function loadMails() {
   if (!current) { toast('계정을 먼저 선택하세요.', true); return; }
   $('#listTitle').textContent = currentFolder || '받은 편지함';
   $('#listMeta').textContent = '';
-  spinner($('#listBody'), '메일을 가져오는 중… (브라우저 세션을 여느라 몇 초 걸립니다)');
 
+  // 1) 보관본으로 즉시 표시 (브라우저 접속 없음)
+  const acctAtStart = current, folderAtStart = currentFolder;
+  let shownCached = false;
+  try {
+    const cached = await api('/api/mails/cached?account=' + encodeURIComponent(current)
+      + (currentFolder ? '&folder=' + encodeURIComponent(currentFolder) : ''));
+    if (acctAtStart !== current || folderAtStart !== currentFolder) return;
+    if (cached.mails.length) {
+      currentMails = cached.mails;
+      renderMails(cached);
+      shownCached = true;
+    }
+  } catch (e) { /* 보관본이 없으면 그냥 원본을 기다린다 */ }
+
+  if (!shownCached) {
+    spinner($('#listBody'), '메일을 가져오는 중… (브라우저 세션을 여느라 몇 초 걸립니다)');
+  } else {
+    $('#listMeta').textContent += ' · 최신 확인 중…';
+  }
+
+  // 2) 이어서 원본을 확인해 새 메일을 반영
   try {
     const data = await api('/api/mails?account=' + encodeURIComponent(current)
       + (currentFolder ? '&folder=' + encodeURIComponent(currentFolder) : ''));
@@ -254,11 +274,15 @@ async function loadMails() {
     else setArchiveStatus('');
   } catch (e) {
     if (e.data && e.data.needLogin) {
-      emptyMsg($('#listBody'), '로그인이 필요합니다.');
+      if (!shownCached) emptyMsg($('#listBody'), '로그인이 필요합니다.');
+      else toast('로그인이 필요합니다. (보관본을 표시 중)', true);
       openLogin(current);
-    } else {
+    } else if (!shownCached) {
       emptyMsg($('#listBody'), e.message);
       toast(e.message, true);
+    } else {
+      $('#listMeta').textContent = $('#listMeta').textContent.replace(' · 최신 확인 중…', '');
+      toast('최신 확인 실패 — 보관본을 표시합니다: ' + e.message, true);
     }
   }
 }
@@ -307,9 +331,9 @@ function renderMails(data) {
     subj.textContent = m.subject || '(제목 없음)';
 
     row.append(num, from, date, subj);
-    row.addEventListener('click', () => openMail(m.n, row));
+    row.addEventListener('click', () => openMail(m.n, row, m.key));
     row.addEventListener('keydown', (ev) => {
-      if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); openMail(m.n, row); }
+      if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); openMail(m.n, row, m.key); }
     });
     box.appendChild(row);
   });
@@ -317,16 +341,18 @@ function renderMails(data) {
 
 // ---------------------------------------------------------------- 본문
 
-async function openMail(n, rowEl) {
+async function openMail(n, rowEl, key, fresh) {
   document.querySelectorAll('.mail').forEach((el) => el.classList.remove('active'));
   if (rowEl) rowEl.classList.add('active');
 
   $('#readTitle').textContent = n + '번 메일';
-  spinner($('#readBody'), '본문을 여는 중…');
+  spinner($('#readBody'), fresh ? '원본을 다시 가져오는 중…' : '본문을 여는 중…');
 
   try {
     const data = await api('/api/mail?account=' + encodeURIComponent(current) + '&n=' + n
-      + (currentFolder ? '&folder=' + encodeURIComponent(currentFolder) : ''));
+      + (currentFolder ? '&folder=' + encodeURIComponent(currentFolder) : '')
+      + (key ? '&key=' + encodeURIComponent(key) : '')
+      + (fresh ? '&fresh=1' : ''));
     const box = $('#readBody');
     box.innerHTML = '';
 
@@ -351,8 +377,18 @@ async function openMail(n, rowEl) {
 
     const note = document.createElement('div');
     note.className = 'note';
-    note.textContent = '※ 메일을 열었으므로 서버에서 읽음 처리됩니다. '
-      + '본문은 안전을 위해 이미지·서식 없이 텍스트로만 표시합니다.';
+    if (data.source === 'archive') {
+      note.textContent = '💾 로컬 보관본입니다'
+        + (data.savedAt ? ' (저장: ' + data.savedAt.replace('T', ' ').slice(0, 16) + ')' : '');
+      const again = document.createElement('button');
+      again.className = 'link';
+      again.textContent = '원본 다시 가져오기';
+      again.addEventListener('click', () => openMail(n, rowEl, key, true));
+      note.append(' · ', again);
+    } else {
+      note.textContent = '※ 메일을 열었으므로 서버에서 읽음 처리됩니다. '
+        + '본문은 안전을 위해 이미지·서식 없이 텍스트로만 표시합니다.';
+    }
 
     box.append(head, pre, note);
     $('#readTitle').textContent = '본문';

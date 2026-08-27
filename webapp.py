@@ -328,6 +328,29 @@ def _goto_folder_if_needed(page, provider, folder_key):
     return None, f
 
 
+@app.get("/api/mails/cached")
+def api_mails_cached():
+    """보관본만으로 목록을 즉시 돌려준다 (브라우저 접속 없음 → 바로 표시)."""
+    acct = get_account(request.args.get("account", ""))
+    if not acct:
+        return jsonify({"error": "계정을 찾을 수 없습니다."}), 404
+
+    fname = request.args.get("folder") or "받은 편지함"
+    recs = AR.list_folder(acct["id"], fname)
+    mails = [{
+        "n": i,
+        "key": r.get("key"),
+        "sender": r.get("sender", ""),
+        "subject": r.get("subject", ""),
+        "date": r.get("date", ""),
+        "unread": bool(r.get("unread")),
+        "isNew": False,
+        "hasBody": bool(r.get("body_saved")),
+    } for i, r in enumerate(recs, 1)]
+    return jsonify({"mails": mails, "mode": "archive", "folder": fname,
+                    "email": acct["email"]})
+
+
 @app.get("/api/mails")
 def api_mails():
     aid = request.args.get("account", "")
@@ -353,7 +376,8 @@ def api_mails():
     seen = M.load_seen(acct)
     for i, m in enumerate(mails, 1):
         m["n"] = i
-        m["isNew"] = M.mail_key(m) not in seen
+        m["key"] = M.mail_key(m)
+        m["isNew"] = m["key"] not in seen
     M.save_seen(acct, seen | {M.mail_key(m) for m in mails})
 
     # 지금 본 편지함의 안읽음 개수는 공짜로 알 수 있으니 캐시에 남긴다
@@ -372,6 +396,21 @@ def api_mail():
     acct = get_account(aid)
     if not acct:
         return jsonify({"error": "계정을 찾을 수 없습니다."}), 404
+
+    # 이미 로컬에 본문이 있으면 브라우저를 건드리지 않고 바로 돌려준다.
+    # (fresh=1 이면 강제로 원본을 다시 가져온다)
+    key = request.args.get("key") or ""
+    fname0 = request.args.get("folder") or "받은 편지함"
+    if key and request.args.get("fresh") != "1":
+        rec = AR.load_mail(acct["id"], fname0, key)
+        if rec and rec.get("body_saved"):
+            return jsonify({
+                "subject": rec.get("subject_full") or rec.get("subject", ""),
+                "header": rec.get("header", ""),
+                "body": rec.get("body", ""),
+                "source": "archive",
+                "savedAt": rec.get("updated") or rec.get("first_seen"),
+            })
 
     c = cfg()
     provider = M.get_provider(c, acct["provider"])
@@ -395,12 +434,23 @@ def api_mail():
     if not (1 <= n <= len(rows)):
         return jsonify({"error": f"{n} 번 메일이 없습니다. (1~{len(rows)})"}), 400
 
+    # 클릭하면 목록 핸들이 갈릴 수 있으니 메타데이터를 먼저 확보
+    meta, _ = M.fetch_mails(page, provider, max(n, 20))
     rows[n - 1].click()
     subject, header, body = M.read_opened_mail(page, provider)
     if not (subject or header or body):
         return jsonify({"error": "본문을 찾지 못했습니다. "
                                  "config.json 의 view.body 셀렉터를 확인하세요."}), 404
-    return jsonify({"subject": subject, "header": header, "body": body})
+
+    # 방금 열어서 읽음 처리됐으니 본문도 보관해 둔다 → 다음부터는 즉시 열린다
+    fname = folder["name"] if folder else "받은 편지함"
+    if body and n - 1 < len(meta):
+        m = meta[n - 1]
+        AR.save_mail(acct["id"], acct.get("email", ""), fname, m, M.mail_key(m),
+                     body=body, header=header, subject_full=subject, seq=n)
+
+    return jsonify({"subject": subject, "header": header, "body": body,
+                    "source": "live"})
 
 
 # ---------------------------------------------------------------- 로그인 API

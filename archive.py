@@ -60,7 +60,7 @@ def has_body(account_id, folder_name, key):
 
 
 def save_mail(account_id, email, folder_name, mail, key,
-              body=None, header=None, subject_full=None):
+              body=None, header=None, subject_full=None, seq=None):
     """메일 한 통을 저장(또는 본문만 나중에 채워넣기). 저장된 레코드를 반환."""
     d = folder_dir(account_id, folder_name)
     d.mkdir(parents=True, exist_ok=True)
@@ -80,6 +80,11 @@ def save_mail(account_id, email, folder_name, mail, key,
         "unread": bool(mail.get("unread")),
         "updated": datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"),
     })
+    # 목록에서의 위치(1부터). 보관본만으로 목록을 재현할 때 정렬 기준이 된다.
+    if seq is None:
+        seq = mail.get("n")
+    if seq is not None:
+        rec["seq"] = int(seq)
     if body is not None:
         rec["body"] = body
         rec["body_saved"] = bool(body)
@@ -91,6 +96,23 @@ def save_mail(account_id, email, folder_name, mail, key,
 
     p.write_text(json.dumps(rec, ensure_ascii=False, indent=2), encoding="utf-8")
     return rec
+
+
+def list_folder(account_id, folder_name, limit=200):
+    """보관본만으로 편지함 목록을 재현한다 (브라우저 접속 없음)."""
+    d = folder_dir(account_id, folder_name)
+    if not d.exists():
+        return []
+    recs = []
+    for f in d.glob("*.json"):
+        try:
+            recs.append(json.loads(f.read_text(encoding="utf-8")))
+        except Exception:
+            pass
+    # 저장 당시의 목록 순서(seq)를 우선 쓰고, 없으면 최근 저장 순
+    recs.sort(key=lambda r: (r.get("seq") is None, r.get("seq") or 0,
+                             r.get("updated") or ""))
+    return recs[:limit]
 
 
 def stats(account_id):

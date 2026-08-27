@@ -689,8 +689,10 @@ def archive_mails(page, provider, account, folder_name, mails,
         needs_body = not AR.has_body(aid, folder_name, key)
 
         if not existed:
-            AR.save_mail(aid, email, folder_name, m, key)
+            AR.save_mail(aid, email, folder_name, m, key, seq=i)
             res["new"] += 1
+        else:
+            AR.save_mail(aid, email, folder_name, m, key, seq=i)   # 순서 갱신
 
         if not needs_body:
             continue
@@ -707,7 +709,7 @@ def archive_mails(page, provider, account, folder_name, mails,
             subject, header, body = read_opened_mail(page, provider)
             if body:
                 AR.save_mail(aid, email, folder_name, m, key,
-                             body=body, header=header, subject_full=subject)
+                             body=body, header=header, subject_full=subject, seq=i)
                 res["bodies"] += 1
                 if progress:
                     progress(i, len(mails))
