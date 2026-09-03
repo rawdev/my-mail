@@ -24,6 +24,57 @@ ARCHIVE_DIR = BASE_DIR / "archive"
 
 _SLUG_BAD = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
+# 메일 목록의 날짜 문자열 → 정렬용 시각.
+# Zoho(한국어)는 연도를 안 준다:  '토 8월 22 7:56 오후'  /  오늘 메일은 '10:04 오전'
+_WEEKDAYS = "월화수목금토일"
+_DATE_RE = re.compile(
+    r"(?:([월화수목금토일])\s+)?"          # 요일 (있을 때만)
+    r"(?:(\d{1,2})월\s*(\d{1,2})\s+)?"     # M월 D (오늘 메일은 없음)
+    r"(\d{1,2}):(\d{2})\s*(오전|오후)"
+)
+
+
+def parse_mail_date(text, now=None):
+    """목록의 날짜 문자열을 datetime 으로. 못 읽으면 None.
+
+    연도가 없으므로 올해/작년 중 **요일이 맞는 쪽**을 고르고,
+    그래도 못 정하면 미래가 아닌 쪽을 쓴다.
+    """
+    if not text:
+        return None
+    m = _DATE_RE.search(text.strip())
+    if not m:
+        return None
+    wd, mon, day, hh, mm, ampm = m.groups()
+    hh, mm = int(hh), int(mm)
+    if ampm == "오전":
+        hh = 0 if hh == 12 else hh
+    else:
+        hh = 12 if hh == 12 else hh + 12
+
+    now = now or datetime.now()
+    if not (mon and day):                      # 시각만 있으면 오늘
+        return now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+
+    mon, day = int(mon), int(day)
+    cands = []
+    for year in (now.year, now.year - 1):
+        try:
+            cands.append(datetime(year, mon, day, hh, mm))
+        except ValueError:                     # 2월 29일 같은 경우
+            pass
+    if not cands:
+        return None
+    if wd:                                     # 요일이 맞는 해를 우선
+        want = _WEEKDAYS.index(wd)
+        for c in cands:
+            if c.weekday() == want:
+                return c
+    for c in cands:                            # 아니면 미래가 아닌 쪽
+        if c <= now:
+            return c
+    return cands[-1]
+
 
 def slug(name):
     """편지함 이름을 파일시스템에 안전한 폴더명으로."""
@@ -94,6 +145,11 @@ def save_mail(account_id, email, folder_name, mail, key,
             rec["subject_full"] = subject_full
     rec.setdefault("body_saved", False)
 
+    # 정렬용 시각을 저장 시점에 한 번만 계산해 둔다
+    dt = parse_mail_date(rec.get("date"))
+    if dt:
+        rec["date_iso"] = dt.isoformat(timespec="seconds")
+
     p.write_text(json.dumps(rec, ensure_ascii=False, indent=2), encoding="utf-8")
     return rec
 
@@ -113,6 +169,49 @@ def list_folder(account_id, folder_name, limit=200):
     recs.sort(key=lambda r: (r.get("seq") is None, r.get("seq") or 0,
                              r.get("updated") or ""))
     return recs[:limit]
+
+
+def _sort_key(rec):
+    """최신이 위로. 날짜를 못 읽은 메일은 보관 시각으로 대신한다."""
+    iso = rec.get("date_iso")
+    if not iso:
+        dt = parse_mail_date(rec.get("date"))
+        iso = dt.isoformat(timespec="seconds") if dt else ""
+    return (iso or "", rec.get("first_seen") or "")
+
+
+def list_account(account_id, limit=500):
+    """계정의 모든 편지함 메일을 한 목록으로 (최신순). 브라우저 접속 없음."""
+    root = account_dir(account_id)
+    if not root.exists():
+        return []
+    recs = []
+    for fdir in root.iterdir():
+        if not fdir.is_dir():
+            continue
+        for f in fdir.glob("*.json"):
+            try:
+                recs.append(json.loads(f.read_text(encoding="utf-8")))
+            except Exception:
+                pass
+    recs.sort(key=_sort_key, reverse=True)
+    return recs[:limit]
+
+
+def find_mail(account_id, key):
+    """편지함을 몰라도 키로 메일을 찾는다."""
+    root = account_dir(account_id)
+    if not root.exists():
+        return None
+    for fdir in root.iterdir():
+        if fdir.is_dir():
+            p = fdir / f"{key}.json"
+            if p.exists():
+                try:
+                    return json.loads(p.read_text(encoding="utf-8"))
+                except Exception:
+                    return None
+    return None
 
 
 def stats(account_id):

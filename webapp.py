@@ -330,16 +330,21 @@ def _goto_folder_if_needed(page, provider, folder_key):
 
 @app.get("/api/mails/cached")
 def api_mails_cached():
-    """보관본만으로 목록을 즉시 돌려준다 (브라우저 접속 없음 → 바로 표시)."""
+    """화면에 보여줄 목록 — 저장된 메일만. 브라우저에 접속하지 않는다.
+
+    folder 를 주면 그 편지함만, 없으면 계정의 모든 편지함을 최신순으로 합쳐서 준다.
+    """
     acct = get_account(request.args.get("account", ""))
     if not acct:
         return jsonify({"error": "계정을 찾을 수 없습니다."}), 404
 
-    fname = request.args.get("folder") or "받은 편지함"
-    recs = AR.list_folder(acct["id"], fname)
+    fname = request.args.get("folder")
+    recs = (AR.list_folder(acct["id"], fname) if fname
+            else AR.list_account(acct["id"]))
     mails = [{
         "n": i,
         "key": r.get("key"),
+        "folder": r.get("folder", ""),
         "sender": r.get("sender", ""),
         "subject": r.get("subject", ""),
         "date": r.get("date", ""),
@@ -348,7 +353,8 @@ def api_mails_cached():
         "hasBody": bool(r.get("body_saved")),
     } for i, r in enumerate(recs, 1)]
     return jsonify({"mails": mails, "mode": "archive", "folder": fname,
-                    "email": acct["email"]})
+                    "email": acct["email"],
+                    "archived": AR.stats(acct["id"])["total"]})
 
 
 @app.get("/api/mails")
@@ -400,16 +406,26 @@ def api_mail():
     # 이미 로컬에 본문이 있으면 브라우저를 건드리지 않고 바로 돌려준다.
     # (fresh=1 이면 강제로 원본을 다시 가져온다)
     key = request.args.get("key") or ""
-    fname0 = request.args.get("folder") or "받은 편지함"
     if key and request.args.get("fresh") != "1":
-        rec = AR.load_mail(acct["id"], fname0, key)
+        rec = AR.find_mail(acct["id"], key)      # 편지함을 몰라도 찾는다
         if rec and rec.get("body_saved"):
             return jsonify({
                 "subject": rec.get("subject_full") or rec.get("subject", ""),
                 "header": rec.get("header", ""),
                 "body": rec.get("body", ""),
                 "source": "archive",
+                "folder": rec.get("folder", ""),
                 "savedAt": rec.get("updated") or rec.get("first_seen"),
+            })
+        if rec and not rec.get("body_saved"):
+            # 메타데이터만 있는 메일(주로 안읽음) — 서버에 접속하지 않고 안내만
+            return jsonify({
+                "subject": rec.get("subject", ""),
+                "header": "",
+                "body": "",
+                "source": "archive",
+                "folder": rec.get("folder", ""),
+                "bodyMissing": True,
             })
 
     c = cfg()

@@ -5,7 +5,6 @@ let accounts = [];
 let providers = [];
 let current = null;      // 선택된 계정 id
 let currentMails = [];
-let currentFolder = '';  // 선택된 폴더 이름 ('' = 기본 = 받은편지함)
 
 // ---------------------------------------------------------------- 유틸
 
@@ -117,13 +116,10 @@ async function removeAccount(a) {
     await api('/api/accounts/' + encodeURIComponent(a.id), { method: 'DELETE' });
     if (current === a.id) {
       current = null;
-      currentFolder = '';
-      emptyMsg($('#folderList'), '계정을 선택하세요.');
-      emptyMsg($('#listBody'), '편지함을 선택하세요.');
+      emptyMsg($('#listBody'), '왼쪽에서 계정을 선택하세요.');
       emptyMsg($('#readBody'), '메일을 클릭하면 본문이 여기에 표시됩니다.');
-      $('#listTitle').textContent = '편지함을 선택하세요';
+      $('#listTitle').textContent = '계정을 선택하세요';
       $('#listMeta').textContent = '';
-      $('#folderMeta').textContent = '';
     }
     await loadAccounts();
     toast('삭제했습니다.');
@@ -136,154 +132,37 @@ async function removeAccount(a) {
 
 function selectAccount(id) {
   current = id;
-  currentFolder = '';
   document.querySelectorAll('#accountList li').forEach((li) => {
     li.classList.toggle('active', li.dataset.id === id);
   });
   emptyMsg($('#readBody'), '메일을 클릭하면 본문이 여기에 표시됩니다.');
   $('#readTitle').textContent = '본문';
-  emptyMsg($('#listBody'), '편지함을 선택하세요.');
-  $('#listTitle').textContent = '편지함을 선택하세요';
-  $('#listMeta').textContent = '';
-  spinner($('#folderList'), '편지함 목록을 불러오는 중…');
-  $('#folderMeta').textContent = '';
-  loadFolders();
-}
-
-// 폴더 이름 앞에 붙일 아이콘 (이름으로 대충 매칭, 없으면 기본 폴더 아이콘)
-function folderIcon(name) {
-  const n = name.toLowerCase();
-  if (/받은|inbox/.test(n)) return '📥';
-  if (/보낸|보냄|sent/.test(n)) return '📤';
-  if (/초안|draft/.test(n)) return '📝';
-  if (/스팸|spam|junk/.test(n)) return '🚫';
-  if (/휴지통|trash|삭제/.test(n)) return '🗑️';
-  if (/보관|archive/.test(n)) return '📦';
-  if (/템플릿|template/.test(n)) return '📋';
-  if (/알림|notification/.test(n)) return '🔔';
-  if (/newsletter|뉴스/.test(n)) return '📰';
-  return '📁';
-}
-
-async function loadFolders() {
-  const acct = current;
-  const box = $('#folderList');
-  try {
-    const data = await api('/api/folders?account=' + encodeURIComponent(acct));
-    if (acct !== current) return;              // 그 사이 계정이 바뀌었으면 무시
-
-    const folders = data.folders || [];
-    if (!folders.length) {
-      // 폴더를 지원하지 않는 서비스 — 기본 편지함만 바로 연다
-      emptyMsg(box, '이 서비스는 편지함 목록을 지원하지 않습니다.');
-      $('#folderMeta').textContent = '';
-      loadMails();
-      return;
-    }
-
-    box.innerHTML = '';
-    $('#folderMeta').textContent = folders.length + '개';
-    folders.forEach((f) => {
-      const el = document.createElement('div');
-      el.className = 'folder';
-      el.dataset.name = f.name;
-      el.setAttribute('role', 'button');
-      el.tabIndex = 0;
-
-      const icon = document.createElement('span');
-      icon.className = 'ficon';
-      icon.textContent = folderIcon(f.name);
-      const nm = document.createElement('span');
-      nm.className = 'fname';
-      nm.textContent = f.name;
-
-      const cnt = document.createElement('span');
-      cnt.className = 'count ' + countClass(f.unread);
-      cnt.dataset.folder = f.name;
-      cnt.textContent = countText(f.unread);
-      cnt.title = f.unread == null
-        ? '안읽음 개수 미확인'
-        : '안읽음 ' + f.unread + ' / 전체 ' + (f.total != null ? f.total : '?')
-          + ' · 보관 ' + (f.archived || 0) + '건';
-
-      el.append(icon, nm, cnt);
-
-      const open = () => selectFolder(f.name);
-      el.addEventListener('click', open);
-      el.addEventListener('keydown', (ev) => {
-        if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); open(); }
-      });
-      box.appendChild(el);
-    });
-
-    // 서버가 알려준 현재 폴더(보통 받은편지함)를 바로 연다
-    const start = folders.find((f) => f.current) || folders[0];
-    selectFolder(start.name);
-  } catch (e) {
-    if (e.data && e.data.needLogin) {
-      emptyMsg(box, '로그인이 필요합니다.');
-      openLogin(acct);
-    } else {
-      emptyMsg(box, e.message);
-    }
-  }
-}
-
-function selectFolder(name) {
-  currentFolder = name;
-  document.querySelectorAll('#folderList .folder').forEach((el) => {
-    el.classList.toggle('active', el.dataset.name === name);
-  });
-  emptyMsg($('#readBody'), '메일을 클릭하면 본문이 여기에 표시됩니다.');
   loadMails();
 }
 
 async function loadMails() {
   if (!current) { toast('계정을 먼저 선택하세요.', true); return; }
-  $('#listTitle').textContent = currentFolder || '받은 편지함';
+  const acct = accounts.find((a) => a.id === current);
+  $('#listTitle').textContent = acct ? acct.email : current;
   $('#listMeta').textContent = '';
+  spinner($('#listBody'), '저장된 메일을 읽는 중…');
 
-  // 1) 보관본으로 즉시 표시 (브라우저 접속 없음)
-  const acctAtStart = current, folderAtStart = currentFolder;
-  let shownCached = false;
+  const acctAtStart = current;
   try {
-    const cached = await api('/api/mails/cached?account=' + encodeURIComponent(current)
-      + (currentFolder ? '&folder=' + encodeURIComponent(currentFolder) : ''));
-    if (acctAtStart !== current || folderAtStart !== currentFolder) return;
-    if (cached.mails.length) {
-      currentMails = cached.mails;
-      renderMails(cached);
-      shownCached = true;
-    }
-  } catch (e) { /* 보관본이 없으면 그냥 원본을 기다린다 */ }
-
-  if (!shownCached) {
-    spinner($('#listBody'), '메일을 가져오는 중… (브라우저 세션을 여느라 몇 초 걸립니다)');
-  } else {
-    $('#listMeta').textContent += ' · 최신 확인 중…';
-  }
-
-  // 2) 이어서 원본을 확인해 새 메일을 반영
-  try {
-    const data = await api('/api/mails?account=' + encodeURIComponent(current)
-      + (currentFolder ? '&folder=' + encodeURIComponent(currentFolder) : ''));
+    // 화면에는 저장된 메일만 보여준다 — 메일 서버에 접속하지 않는다.
+    const data = await api('/api/mails/cached?account=' + encodeURIComponent(current));
+    if (acctAtStart !== current) return;
     currentMails = data.mails;
-    renderMails(data);
-    // 실행하면 자동으로 로컬 복사 (없는 메일만) — 목록 표시를 막지 않도록 뒤이어 실행
-    if (data.mails.length) autoArchive(current, currentFolder);
-    else setArchiveStatus('');
-  } catch (e) {
-    if (e.data && e.data.needLogin) {
-      if (!shownCached) emptyMsg($('#listBody'), '로그인이 필요합니다.');
-      else toast('로그인이 필요합니다. (보관본을 표시 중)', true);
-      openLogin(current);
-    } else if (!shownCached) {
-      emptyMsg($('#listBody'), e.message);
-      toast(e.message, true);
-    } else {
-      $('#listMeta').textContent = $('#listMeta').textContent.replace(' · 최신 확인 중…', '');
-      toast('최신 확인 실패 — 보관본을 표시합니다: ' + e.message, true);
+    if (!data.mails.length) {
+      $('#listMeta').textContent = '';
+      emptyMsg($('#listBody'),
+        '저장된 메일이 없습니다. 상단 "⭳ 전체 가져오기" 를 눌러 받아오세요.');
+      return;
     }
+    renderMails(data);
+  } catch (e) {
+    emptyMsg($('#listBody'), e.message);
+    toast(e.message, true);
   }
 }
 
@@ -298,8 +177,10 @@ function renderMails(data) {
     return;
   }
   const unread = data.mails.filter((m) => m.unread).length;
-  $('#listMeta').textContent =
-    data.mails.length + '건 · 안읽음 ' + unread + ' · ' + data.mode;
+  const noBody = data.mails.filter((m) => m.hasBody === false).length;
+  $('#listMeta').textContent = '저장된 메일 ' + data.mails.length + '건'
+    + (unread ? ' · 안읽음 ' + unread : '')
+    + (noBody ? ' · 본문없음 ' + noBody : '');
 
   data.mails.forEach((m) => {
     const row = document.createElement('div');
@@ -328,7 +209,16 @@ function renderMails(data) {
 
     const subj = document.createElement('div');
     subj.className = 'subj';
-    subj.textContent = m.subject || '(제목 없음)';
+    const stext = document.createElement('span');
+    stext.className = 'stext';
+    stext.textContent = m.subject || '(제목 없음)';
+    subj.appendChild(stext);
+    if (m.folder) {
+      const tag = document.createElement('span');
+      tag.className = 'ftag';
+      tag.textContent = m.folder;
+      subj.appendChild(tag);
+    }
 
     row.append(num, from, date, subj);
     row.addEventListener('click', () => openMail(m.n, row, m.key));
@@ -350,7 +240,6 @@ async function openMail(n, rowEl, key, fresh) {
 
   try {
     const data = await api('/api/mail?account=' + encodeURIComponent(current) + '&n=' + n
-      + (currentFolder ? '&folder=' + encodeURIComponent(currentFolder) : '')
       + (key ? '&key=' + encodeURIComponent(key) : '')
       + (fresh ? '&fresh=1' : ''));
     const box = $('#readBody');
@@ -373,13 +262,18 @@ async function openMail(n, rowEl, key, fresh) {
     // (외부 이미지 추적 · 스크립트 삽입 방지)
     const pre = document.createElement('pre');
     pre.className = 'read-text';
-    pre.textContent = data.body || '(본문 없음)';
+    pre.textContent = data.bodyMissing
+      ? '본문이 저장되지 않은 메일입니다.\n\n안읽은 메일은 열면 읽음 처리되기 때문에 '
+        + '본문을 자동으로 받아두지 않습니다.\n아래 "원본 다시 가져오기" 를 누르면 '
+        + '지금 받아옵니다. (해당 메일이 읽음 처리됩니다)'
+      : (data.body || '(본문 없음)');
 
     const note = document.createElement('div');
     note.className = 'note';
     if (data.source === 'archive') {
-      note.textContent = '💾 로컬 보관본입니다'
-        + (data.savedAt ? ' (저장: ' + data.savedAt.replace('T', ' ').slice(0, 16) + ')' : '');
+      note.textContent = (data.bodyMissing ? '💾 저장된 본문 없음' : '💾 저장된 메일')
+        + (data.folder ? ' · ' + data.folder : '')
+        + (data.savedAt ? ' · ' + data.savedAt.replace('T', ' ').slice(0, 16) : '');
       const again = document.createElement('button');
       again.className = 'link';
       again.textContent = '원본 다시 가져오기';
@@ -506,91 +400,21 @@ $('#addForm').addEventListener('submit', async (ev) => {
 
 function setArchiveStatus(text) { $('#archiveStatus').textContent = text || ''; }
 
-// 목록을 불러온 뒤 자동으로 실행 — 아직 저장 안 된 메일만 로컬로 복사한다.
-async function autoArchive(acct, folder) {
-  setArchiveStatus('💾 보관 중…');
-  try {
-    const r = await api('/api/archive', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ account: acct, folder: folder }),
-    });
-    if (acct !== current) return;                 // 그 사이 계정이 바뀌었으면 무시
-    const bits = [];
-    if (r.new) bits.push('새 메일 ' + r.new + '건');
-    if (r.bodies) bits.push('본문 ' + r.bodies + '건');
-    if (r.skipped_unread) bits.push('안읽음 건너뜀 ' + r.skipped_unread);
-    setArchiveStatus(bits.length
-      ? '💾 ' + bits.join(' · ') + ' (총 ' + r.archived + '건)'
-      : '💾 보관 최신 (총 ' + r.archived + '건)');
-    updateFolderBadgeArchived();
-  } catch (e) {
-    setArchiveStatus('💾 보관 실패: ' + e.message);
-  }
-}
-
-function updateFolderBadgeArchived() {
-  // 폴더/계정 목록을 조용히 다시 읽어 배지만 갱신 (선택 상태는 건드리지 않음)
-  if (!current) return;
-  api('/api/folders?account=' + encodeURIComponent(current)).then((d) => {
-    (d.folders || []).forEach((f) => {
-      const el = document.querySelector('#folderList .count[data-folder="' + CSS.escape(f.name) + '"]');
-      if (el && f.unread != null) {
-        el.textContent = countText(f.unread);
-        el.className = 'count ' + countClass(f.unread);
-        el.title = '안읽음 ' + f.unread + ' / 전체 ' + (f.total != null ? f.total : '?')
-          + ' · 보관 ' + (f.archived || 0) + '건';
-      }
-    });
-  }).catch(() => {});
-  refreshAccountBadges();
-}
-
 function refreshAccountBadges() {
   api('/api/accounts').then((d) => {
+    accounts = d.accounts;
     (d.accounts || []).forEach((a) => {
       const el = document.querySelector('#accountList .count[data-acct="' + CSS.escape(a.id) + '"]');
       if (!el) return;
       el.textContent = countText(a.unread);
       el.className = 'count ' + countClass(a.unread);
       el.title = a.unread == null
-        ? '안읽음 개수 미확인 — 상단 "안읽음 세기" 를 누르세요'
-        : '안읽은 메일 ' + a.unread + '건 · 보관 ' + (a.archived || 0) + '건';
+        ? '안읽음 개수 미확인 — "전체 가져오기" 를 실행하세요'
+        : '안읽은 메일 ' + a.unread + '건 · 저장 ' + (a.archived || 0) + '건';
     });
   }).catch(() => {});
 }
 
-// 모든 편지함을 하나씩 돌며 안읽음 개수를 센다 (편지함당 몇 초 걸림)
-async function countAllUnread() {
-  if (!current) { toast('계정을 먼저 선택하세요.', true); return; }
-  const btn = $('#btnCount');
-  const names = [...document.querySelectorAll('#folderList .folder')].map((e) => e.dataset.name);
-  if (!names.length) { toast('편지함 목록이 없습니다.', true); return; }
-
-  btn.disabled = true;
-  const acct = current;
-  let done = 0;
-  for (const name of names) {
-    if (acct !== current) break;
-    btn.textContent = '🔄 세는 중 ' + (++done) + '/' + names.length;
-    try {
-      const r = await api('/api/unread?account=' + encodeURIComponent(acct)
-        + '&folder=' + encodeURIComponent(name));
-      const el = document.querySelector('#folderList .count[data-folder="' + CSS.escape(name) + '"]');
-      if (el) { el.textContent = countText(r.unread); el.className = 'count ' + countClass(r.unread); }
-      const ael = document.querySelector('#accountList .count[data-acct="' + CSS.escape(acct) + '"]');
-      if (ael && r.accountUnread != null) {
-        ael.textContent = countText(r.accountUnread);
-        ael.className = 'count ' + countClass(r.accountUnread);
-      }
-    } catch (e) { /* 한 폴더 실패해도 계속 */ }
-  }
-  btn.disabled = false;
-  btn.textContent = '🔄 안읽음 세기';
-  toast('안읽음 개수를 갱신했습니다.');
-}
-
-$('#btnCount').addEventListener('click', countAllUnread);
 $('#btnReload').addEventListener('click', () => { if (current) loadMails(); });
 
 // ---------------------------------------------------------------- 전체 가져오기
@@ -646,11 +470,6 @@ async function syncAll() {
       });
       newMails += r.new || 0;
       bodies += r.bodies || 0;
-      // 지금 보고 있는 계정이면 배지를 즉시 반영
-      if (job.acct.id === current) {
-        const el = document.querySelector('#folderList .count[data-folder="' + CSS.escape(r.folder) + '"]');
-        if (el) { el.textContent = countText(r.unread); el.className = 'count ' + countClass(r.unread); }
-      }
     } catch (e) {
       failed++;
     }
@@ -667,6 +486,7 @@ async function syncAll() {
     api('/api/sync/done', { method: 'POST' }).catch(() => {});
     toast('전체 가져오기 완료 — 새 메일 ' + newMails + '건, 본문 ' + bodies + '건'
       + (failed ? ', 실패 ' + failed + '개 편지함' : ''));
+    if (current) loadMails();            // 받은 메일을 화면에 반영
   }
 }
 
